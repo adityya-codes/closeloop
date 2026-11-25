@@ -39,14 +39,32 @@ PLANS = {
 LEADS = {}
 ORDERS = {}
 
+gemini_client = OpenAI(
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+    api_key=os.getenv("GEMINI_API_KEY"),
+)
+
+def get_vector(text: str) -> list[float]:
+    res = gemini_client.embeddings.create(model="gemini-embedding-2", input=text)
+    return res.data[0].embedding
+
+def similarity(vec_a: list[float], vec_b: list[float]) -> float:
+    dot = sum(a * b for a, b in zip(vec_a, vec_b))
+    len_a = math.sqrt(sum(a * a for a in vec_a))
+    len_b = math.sqrt(sum(b * b for b in vec_b))
+    return dot / (len_a * len_b)
+
 with open("brochure.txt", "r", encoding="utf-8") as f:
     CHUNKS = [c.strip() for c in f.read().split("\n\n") if c.strip()]
 
+CHUNK_VECTORS = [get_vector(chunk) for chunk in CHUNKS]
+
 def search_brochure(query: str) -> str:
-    query_words = set(re.findall(r"\w+", query.lower()))
-    scored = [(len(query_words & set(re.findall(r"\w+", c.lower()))), c) for c in CHUNKS]
+    query_vec = get_vector(query)
+    scored = [(similarity(query_vec, vec), chunk) for chunk, vec in zip(CHUNKS, CHUNK_VECTORS)]
     scored.sort(key=lambda x: x[0], reverse=True)
-    top = [chunk for score, chunk in scored[:2] if score > 0]
+    print(f"RAG match score: {scored[0][0]:.2f} -> {scored[0][1][:45]}...")
+    top = [chunk for score, chunk in scored[:2] if score > 0.35]
     return "\n\n".join(top) if top else "NO RELEVANT INFO FOUND."
 
 BASE_URL = (os.getenv("RENDER_EXTERNAL_URL") or "http://127.0.0.1:8000").rstrip("/")
