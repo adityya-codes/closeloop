@@ -82,8 +82,23 @@ class ChatRequest(BaseModel):
 def chat(req: ChatRequest):
     lead = LEADS.setdefault(
         req.phone,
-        {"phone": req.phone, "status": "NEW", "plan": None, "payment_link": None, "messages": []},
+        {
+            "phone": req.phone,
+            "status": "NEW",
+            "plan": None,
+            "payment_link": None,
+            "ai_enabled": True,
+            "messages": [],
+        },
     )
+
+    # Always log the customer's message first
+    lead["messages"].append({"sender": "customer", "text": req.message})
+
+    # If a human operator took over this chat, stay quiet
+    if not lead["ai_enabled"]:
+        return {"reply": None, "status": lead["status"], "payment_link": None}
+
     context = search_brochure(req.message)
 
     system_prompt = f"""You are a concise sales assistant.
@@ -117,7 +132,6 @@ COMPANY DATA:
         lead["payment_link"] = payment_link
         reply = f"{reply}\n\nPay ₹{PLANS[buy_plan]['price']} here: {payment_link}"
 
-    lead["messages"].append({"sender": "customer", "text": req.message})
     lead["messages"].append({"sender": "ai", "text": reply})
 
     return {"reply": reply, "status": lead["status"], "payment_link": payment_link}
@@ -199,3 +213,22 @@ async def razorpay_webhook(request: Request):
 @app.get("/leads")
 def get_leads():
     return list(LEADS.values())
+    
+class HumanReplyRequest(BaseModel):
+    message: str
+
+@app.post("/leads/{phone}/toggle-ai")
+def toggle_ai(phone: str):
+    lead = LEADS.get(phone)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    lead["ai_enabled"] = not lead["ai_enabled"]
+    return {"phone": phone, "ai_enabled": lead["ai_enabled"]}
+
+@app.post("/leads/{phone}/human-reply")
+def human_reply(phone: str, req: HumanReplyRequest):
+    lead = LEADS.get(phone)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    lead["messages"].append({"sender": "human", "text": req.message})
+    return {"status": "sent"}

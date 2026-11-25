@@ -9,7 +9,7 @@ const PLAN_PRICES: Record<string, number> = {
 };
 
 interface Message {
-  sender: "customer" | "ai";
+  sender: "customer" | "ai" | "human";
   text: string;
 }
 
@@ -18,10 +18,10 @@ interface Lead {
   status: "NEW" | "LINK_SENT" | "WON";
   plan: string | null;
   payment_link: string | null;
+  ai_enabled: boolean;
   messages: Message[];
 }
 
-// Turns any http:// link in an AI reply into a clickable checkout link
 function renderTextWithLinks(text: string) {
   const parts = text.split(/(https?:\/\/[^\s]+)/g);
   return parts.map((part, i) =>
@@ -44,6 +44,7 @@ function renderTextWithLinks(text: string) {
 export default function App() {
   const [phone, setPhone] = useState("9876543210");
   const [input, setInput] = useState("");
+  const [operatorInput, setOperatorInput] = useState("");
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -57,7 +58,6 @@ export default function App() {
     }
   };
 
-  // Poll live CRM data every 2 seconds so WON updates appear automatically
   useEffect(() => {
     fetchLeads();
     const timer = setInterval(fetchLeads, 2000);
@@ -86,6 +86,26 @@ export default function App() {
     }
   };
 
+  const toggleAi = async () => {
+    if (!activeLead) return;
+    await fetch(`${API_URL}/leads/${activeLead.phone}/toggle-ai`, { method: "POST" });
+    await fetchLeads();
+  };
+
+  const sendHumanReply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeLead || !operatorInput.trim()) return;
+
+    const text = operatorInput.trim();
+    setOperatorInput("");
+    await fetch(`${API_URL}/leads/${activeLead.phone}/human-reply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text }),
+    });
+    await fetchLeads();
+  };
+
   const wonLeads = leads.filter((l) => l.status === "WON");
   const totalRevenue = wonLeads.reduce(
     (sum, l) => sum + (l.plan ? PLAN_PRICES[l.plan] || 0 : 0),
@@ -104,7 +124,7 @@ export default function App() {
         <div>
           <h1 style={{ margin: 0, fontSize: 24 }}>CloseLoop AI</h1>
           <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 14 }}>
-            AI Brochure RAG + Automated Payment Checkout + Live Webhook Settlement
+            Vector RAG Sales Chat + Automated Webhook Settlement + Human Takeover
           </p>
         </div>
         <span style={{ background: "#dcfce7", color: "#166534", padding: "6px 12px", borderRadius: 999, fontSize: 13, fontWeight: 600 }}>
@@ -114,7 +134,7 @@ export default function App() {
 
       <div style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: 24 }}>
         {/* LEFT PANEL: Customer Chat Simulator */}
-        <section style={{ background: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", display: "flex", flexDirection: "column", height: 600 }}>
+        <section style={{ background: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", display: "flex", flexDirection: "column", height: 640 }}>
           <div style={{ padding: 16, borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <strong>Customer Chat Simulator</strong>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -130,27 +150,36 @@ export default function App() {
           <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
             {!activeLead || activeLead.messages.length === 0 ? (
               <p style={{ color: "#94a3b8", textAlign: "center", marginTop: 40, fontSize: 14 }}>
-                Ask about plans, pricing, refunds, or say "I want to buy the Pro plan".
+                Ask about plans, refunds ("can I get my money back?"), or say "I want to buy the Pro plan".
               </p>
             ) : (
-              activeLead.messages.map((m, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    alignSelf: m.sender === "customer" ? "flex-end" : "flex-start",
-                    background: m.sender === "customer" ? "#2563eb" : "#f1f5f9",
-                    color: m.sender === "customer" ? "#fff" : "#0f172a",
-                    padding: "10px 14px",
-                    borderRadius: 12,
-                    maxWidth: "82%",
-                    whiteSpace: "pre-wrap",
-                    fontSize: 14,
-                    lineHeight: 1.45,
-                  }}
-                >
-                  {m.sender === "ai" ? renderTextWithLinks(m.text) : m.text}
-                </div>
-              ))
+              activeLead.messages.map((m, idx) => {
+                const isCustomer = m.sender === "customer";
+                const isHuman = m.sender === "human";
+                return (
+                  <div
+                    key={idx}
+                    style={{
+                      alignSelf: isCustomer ? "flex-end" : "flex-start",
+                      background: isCustomer ? "#2563eb" : isHuman ? "#dcfce7" : "#f1f5f9",
+                      color: isCustomer ? "#fff" : isHuman ? "#14532d" : "#0f172a",
+                      padding: "10px 14px",
+                      borderRadius: 12,
+                      maxWidth: "82%",
+                      whiteSpace: "pre-wrap",
+                      fontSize: 14,
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    {!isCustomer && (
+                      <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4, opacity: 0.7 }}>
+                        {isHuman ? "Human Operator" : "AI Assistant"}
+                      </div>
+                    )}
+                    {isCustomer ? m.text : renderTextWithLinks(m.text)}
+                  </div>
+                );
+              })
             )}
           </div>
 
@@ -171,7 +200,7 @@ export default function App() {
           </form>
         </section>
 
-        {/* RIGHT PANEL: Operator CRM Dashboard */}
+        {/* RIGHT PANEL: Operator CRM Dashboard & Takeover */}
         <section style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
             <div style={{ background: "#fff", padding: 16, borderRadius: 12, border: "1px solid #e2e8f0" }}>
@@ -188,7 +217,7 @@ export default function App() {
             </div>
           </div>
 
-          <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", padding: 16, flex: 1 }}>
+          <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", padding: 16 }}>
             <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>Live Lead Pipeline</h3>
             {leads.length === 0 ? (
               <p style={{ color: "#94a3b8", fontSize: 14 }}>No leads yet. Send a message on the left to start.</p>
@@ -199,7 +228,7 @@ export default function App() {
                     <th style={{ padding: "8px 4px" }}>Phone</th>
                     <th style={{ padding: "8px 4px" }}>Plan</th>
                     <th style={{ padding: "8px 4px" }}>Status</th>
-                    <th style={{ padding: "8px 4px" }}>Messages</th>
+                    <th style={{ padding: "8px 4px" }}>Handler</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -222,12 +251,63 @@ export default function App() {
                             {lead.status}
                           </span>
                         </td>
-                        <td style={{ padding: "10px 4px", color: "#64748b" }}>{lead.messages.length}</td>
+                        <td style={{ padding: "10px 4px", fontSize: 12, fontWeight: 600, color: lead.ai_enabled ? "#2563eb" : "#15803d" }}>
+                          {lead.ai_enabled ? "AI Bot" : "Human"}
+                        </td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
+            )}
+          </div>
+
+          {/* OPERATOR TAKEOVER BOX */}
+          <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", padding: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 16 }}>Operator Control</h3>
+                <div style={{ fontSize: 12, color: "#64748b" }}>
+                  Selected lead: {activeLead ? activeLead.phone : "Send a chat message first"}
+                </div>
+              </div>
+              <button
+                onClick={toggleAi}
+                disabled={!activeLead}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: 8,
+                  border: "none",
+                  fontWeight: 600,
+                  cursor: activeLead ? "pointer" : "not-allowed",
+                  background: activeLead?.ai_enabled ? "#f97316" : "#16a34a",
+                  color: "#fff",
+                  opacity: activeLead ? 1 : 0.4,
+                }}
+              >
+                {activeLead?.ai_enabled ? "Take Over (Pause AI)" : "Resume AI Bot"}
+              </button>
+            </div>
+
+            {activeLead && !activeLead.ai_enabled ? (
+              <form onSubmit={sendHumanReply} style={{ display: "flex", gap: 8 }}>
+                <input
+                  value={operatorInput}
+                  onChange={(e) => setOperatorInput(e.target.value)}
+                  placeholder="Type reply as human operator..."
+                  style={{ flex: 1, padding: "10px 12px", borderRadius: 8, border: "1px solid #86efac", fontSize: 14 }}
+                />
+                <button
+                  type="submit"
+                  style={{ padding: "10px 16px", borderRadius: 8, border: "none", background: "#16a34a", color: "#fff", fontWeight: 600, cursor: "pointer" }}
+                >
+                  Send as Human
+                </button>
+              </form>
+            ) : (
+              <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>
+                AI is currently handling this conversation automatically. Click <strong>Take Over</strong> to step in manually.
+              </p>
             )}
           </div>
         </section>
